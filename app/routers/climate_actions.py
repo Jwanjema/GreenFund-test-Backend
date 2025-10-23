@@ -1,5 +1,7 @@
+# GreenFund-test-Backend-backup/app/routers/climate_actions.py
 import httpx
 import json
+import asyncio # <-- Make sure asyncio is imported
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select, desc
 from openai import APIError
@@ -8,30 +10,50 @@ from app.database import get_db
 from app.models import Farm, User, FarmActivity, SoilReport
 from app.security import get_current_user
 from app.schemas import PestDiseaseAlertResponse, CarbonGuidanceResponse, WaterAdviceResponse
-from app.soil_model import get_openai_client # Back to OpenAI
-# --- NEW: Import the rules ---
+from app.soil_model import get_openai_client
 from app.climate_rules import assess_pest_disease_risks, assess_water_stress, assess_carbon_trend
 
 router = APIRouter(prefix="/climate-actions", tags=["Climate Actions"])
 
+# --- vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv ---
+# --- UPDATED WEATHER FETCH FUNCTION ---
+# --- vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv ---
 async def _fetch_weather_data(latitude: float, longitude: float, daily_params: str):
-    """Fetches weather data from Open-Meteo."""
+    """Fetches weather data from Open-Meteo with basic retries."""
     WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
     params = {"latitude": latitude, "longitude": longitude, "daily": daily_params, "timezone": "auto"}
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(WEATHER_API_URL, params=params, timeout=10.0)
-            response.raise_for_status()
-            return response.json().get("daily", {})
-    except httpx.HTTPStatusError as e:
-        print(f"ERROR: Open-Meteo API returned status {e.response.status_code}: {e.response.text}")
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Weather service returned an error.")
-    except httpx.RequestError as e:
-        print(f"ERROR: Could not connect to Open-Meteo API: {e}")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not connect to the weather service.")
-    except Exception as e:
-        print(f"ERROR: An unexpected error occurred while fetching weather data: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
+    max_retries = 2 # Try original request + 2 retries
+    base_delay = 1 # Start with 1 second delay between retries
+
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient() as client:
+                # Increased timeout to 15 seconds
+                response = await client.get(WEATHER_API_URL, params=params, timeout=15.0)
+                response.raise_for_status() # Raise exception for bad status codes (4xx, 5xx)
+                # Return the 'daily' data, or an empty dict if missing
+                return response.json().get("daily", {})
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            print(f"WARN: Attempt {attempt + 1}/{max_retries + 1} failed to fetch weather: {e}")
+            if attempt == max_retries:
+                # If this was the last attempt, raise the final HTTP Exception
+                if isinstance(e, httpx.HTTPStatusError):
+                    print(f"ERROR: Open-Meteo API returned status {e.response.status_code} after retries: {e.response.text}")
+                    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Weather service error after retries.")
+                else: # Handles httpx.RequestError (connection, timeout, etc.)
+                     print(f"ERROR: Could not connect to Open-Meteo API after {max_retries + 1} attempts: {e}")
+                     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not connect to the weather service after retries.")
+            # Wait before the next retry (e.g., 1s, 2s, 4s)
+            await asyncio.sleep(base_delay * (2 ** attempt))
+        except Exception as e:
+            # Catch any other unexpected errors during fetch/parsing
+            print(f"ERROR: An unexpected error occurred during weather fetch: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred fetching weather data.")
+    # This line should technically be unreachable if retries/exceptions work correctly
+    raise HTTPException(status_code=500, detail="Weather fetch failed unexpectedly after retries.")
+# --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ---
+# --- END UPDATED FUNCTION        ---
+# --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ---
 
 
 @router.get("/alerts/{farm_id}", response_model=PestDiseaseAlertResponse)
@@ -39,14 +61,23 @@ async def get_pest_disease_alerts(farm_id: int, db: Session = Depends(get_db), c
     farm = db.get(Farm, farm_id)
     if not farm: raise HTTPException(status_code=404, detail="Farm not found")
 
-    # 1. Fetch weather
+    # 1. Fetch weather (now uses retry logic)
     weather_params = "temperature_2m_max,temperature_2m_min,precipitation_sum,relative_humidity_2m_mean"
-    forecast_data = await _fetch_weather_data(farm.latitude, farm.longitude, weather_params)
+    try:
+        forecast_data = await _fetch_weather_data(farm.latitude, farm.longitude, weather_params)
+    except HTTPException as http_exc:
+         # If weather fetch fails after retries, re-raise the specific error
+         raise http_exc
+    except Exception as e:
+        # Catch any other unexpected error during the fetch call
+        print(f"ERROR: Unexpected error calling _fetch_weather_data for alerts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve weather data for alerts.")
+
 
     # 2. Run Rules
     pest_risk_assessment = assess_pest_disease_risks(forecast_data, farm.current_crop)
 
-    # 3. Ask AI for Refined Advice based on Assessment
+    # 3. Ask AI for Refined Advice
     try:
         client = get_openai_client()
         current_crop_info = f"The farm is growing: {farm.current_crop}." if farm.current_crop else "The farm grows various crops."
@@ -64,9 +95,10 @@ async def get_pest_disease_alerts(farm_id: int, db: Session = Depends(get_db), c
         ai_data = json.loads(response_content)
         alerts_data = ai_data.get("alerts", [])
     except APIError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail=f"AI pest analysis failed: {e.message}")
+        print(f"ERROR: OpenAI API error during pest analysis: {e}")
+        raise HTTPException(status_code=e.status_code or 500, detail=f"AI pest analysis failed: {getattr(e, 'message', str(e))}")
     except Exception as e:
-        # If AI fails, we could potentially return the basic rule assessment, but let's raise for now
+        print(f"ERROR: Unexpected error during AI pest analysis refinement: {e}")
         raise HTTPException(status_code=500, detail=f"AI pest analysis refinement failed: {e}")
 
     return PestDiseaseAlertResponse(farm_id=farm_id, alerts=alerts_data)
@@ -77,14 +109,13 @@ async def get_carbon_sequestration_guidance(farm_id: int, db: Session = Depends(
     farm = db.get(Farm, farm_id)
     if not farm: raise HTTPException(status_code=404, detail="Farm not found")
 
-    # 1. Fetch Farm Data
+    # Fetch Farm Data
     activities = db.exec(select(FarmActivity).where(FarmActivity.farm_id == farm_id).order_by(desc(FarmActivity.date)).limit(10)).all()
-    # Soil data could also be fetched here if rules needed it
 
-    # 2. Run Rules (Placeholder rule for now)
+    # Run Rules
     carbon_trend_assessment = assess_carbon_trend(activities)
 
-    # 3. Ask AI for Refined Advice
+    # Ask AI for Refined Advice
     try:
         client = get_openai_client()
         activity_summary = ", ".join(list(set([a.activity_type for a in activities]))) or "no activities logged"
@@ -101,8 +132,10 @@ async def get_carbon_sequestration_guidance(farm_id: int, db: Session = Depends(
         response_content = completion.choices[0].message.content
         guidance_data = json.loads(response_content)
     except APIError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail=f"AI carbon analysis failed: {e.message}")
+        print(f"ERROR: OpenAI API error during carbon analysis: {e}")
+        raise HTTPException(status_code=e.status_code or 500, detail=f"AI carbon analysis failed: {getattr(e, 'message', str(e))}")
     except Exception as e:
+        print(f"ERROR: Unexpected error during AI carbon analysis refinement: {e}")
         raise HTTPException(status_code=500, detail=f"AI carbon analysis refinement failed: {e}")
 
     return CarbonGuidanceResponse(farm_id=farm_id, guidance=guidance_data)
@@ -113,9 +146,18 @@ async def get_water_management_advice(farm_id: int, db: Session = Depends(get_db
     farm = db.get(Farm, farm_id)
     if not farm: raise HTTPException(status_code=404, detail="Farm not found")
 
-    # 1. Fetch weather
+    # 1. Fetch weather (now uses retry logic)
     weather_params = "precipitation_sum,et0_fao_evapotranspiration"
-    forecast_data = await _fetch_weather_data(farm.latitude, farm.longitude, weather_params)
+    try:
+        forecast_data = await _fetch_weather_data(farm.latitude, farm.longitude, weather_params)
+    except HTTPException as http_exc:
+        # If weather fetch fails after retries, re-raise the specific error
+        raise http_exc
+    except Exception as e:
+        # Catch any other unexpected error during the fetch call
+        print(f"ERROR: Unexpected error calling _fetch_weather_data for water advice: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve weather data for water advice.")
+
 
     # 2. Run Rules
     water_stress_assessment = assess_water_stress(forecast_data)
@@ -138,8 +180,10 @@ async def get_water_management_advice(farm_id: int, db: Session = Depends(get_db
         response_content = completion.choices[0].message.content
         advice_data = json.loads(response_content)
     except APIError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail=f"AI water analysis failed: {e.message}")
+        print(f"ERROR: OpenAI API error during water analysis: {e}")
+        raise HTTPException(status_code=e.status_code or 500, detail=f"AI water analysis failed: {getattr(e, 'message', str(e))}")
     except Exception as e:
+        print(f"ERROR: Unexpected error during AI water analysis refinement: {e}")
         raise HTTPException(status_code=500, detail=f"AI water analysis refinement failed: {e}")
 
     return WaterAdviceResponse(farm_id=farm_id, advice=advice_data)
