@@ -1,66 +1,56 @@
+import json
 from typing import List, Dict, Any
+from openai import APIError
 from app.models import FarmActivity
-from datetime import datetime, timedelta
+from app.soil_model import get_openai_client # Back to OpenAI
+# Import rules - we can reuse some
+from app.climate_rules import assess_pest_disease_risks, assess_water_stress
 
-def generate_recommendations(
-    daily_forecast: Dict[str, Any], 
-    activities: List[FarmActivity]
+async def generate_recommendations(
+    daily_forecast: Dict[str, Any],
+    activities: List[FarmActivity],
+    farm_crop: str
 ) -> List[str]:
-    """
-    Analyzes a 7-day forecast AND recent farm activities
-    to generate smart recommendations.
-    """
-    recommendations = set()
+    """Analyzes forecast and activities using Rules + AI to generate recommendations."""
 
-    # --- 1. Analyze Weather (Existing Logic) ---
-    max_temps = daily_forecast.get("temperature_2m_max", [])
-    min_temps = daily_forecast.get("temperature_2m_min", [])
-    precipitation = daily_forecast.get("precipitation_sum", [])
-    
-    if any(temp > 30 for temp in max_temps):
-        recommendations.add("🌡️ High temperatures detected. Ensure crops have adequate water and check for signs of heat stress.")
-    
-    if any(temp < 5 for temp in min_temps):
-        recommendations.add("❄️ Low temperatures detected. Protect sensitive crops from potential frost damage, especially overnight.")
-    
-    total_precipitation = sum(precipitation)
-    
-    if any(precip > 10 for precip in precipitation):
-        recommendations.add("💧 Heavy rainfall is expected. Ensure proper drainage to prevent waterlogging and check for soil erosion.")
-    
-    if total_precipitation < 2:
-        recommendations.add("☀️ A dry week is expected. Plan your irrigation schedule to conserve water but avoid crop dehydration.")
+    # 1. Run Rules (reuse from climate_rules)
+    # Fetch required params if not already present in daily_forecast
+    # Note: This might require fetching more weather data in the climate.py endpoint
+    pest_assessment = assess_pest_disease_risks(daily_forecast, farm_crop)
+    water_assessment = assess_water_stress(daily_forecast)
 
-    # --- 2. Analyze Activities (New Logic) ---
-    now = datetime.utcnow()
-    recent_activities = [
-        act for act in activities 
-        if act.date > (now - timedelta(days=7))
-    ]
+    # 2. Ask AI for Recommendations based on Assessment
+    try:
+        client = get_openai_client()
+        activity_summary = ", ".join(list(set([a.activity_type for a in activities[:5]]))) or "no recent activities"
+        current_crop_info = f"The primary crop is {farm_crop}." if farm_crop else "The farm grows various crops."
 
-    # Rule: Check for high-carbon activities
-    high_carbon_activities = [
-        act.activity_type for act in recent_activities 
-        if act.activity_type == "Fertilizing"
-    ]
-    if high_carbon_activities:
-        recommendations.add("💨 You recently used fertilizer, which has a high carbon footprint. Consider switching to organic compost to improve soil health and reduce emissions.")
+        prompt = f"""
+        You are an AI agronomist for a Kenyan farmer. {current_crop_info}
+        Based on the 7-day weather forecast and recent activities ({activity_summary}), a basic assessment suggests:
+        - Key Pest/Disease Risks: {json.dumps(pest_assessment) if pest_assessment else "Low / None identified"}
+        - Water Stress Level: {water_assessment}
 
-    # Rule: Check planting activity against rain forecast
-    planted_recently = any(act.activity_type == "Planting" for act in recent_activities)
-    
-    if planted_recently and total_precipitation < 2:
-        recommendations.add("🌱 You've planted recently during a forecasted dry week. Ensure your new seeds get critical irrigation to help them germinate.")
-    
-    if planted_recently and any(precip > 10 for precip in precipitation):
-        recommendations.add("🌱 You've planted recently, and heavy rain is coming. Be sure to check for seed washout or soil erosion in your new plots.")
-        
-    # Rule: Check for inactivity
-    if not recent_activities:
-        recommendations.add("🤔 No activities logged this week. Remember to log your activities to get more accurate insights and track your carbon footprint.")
+        Provide ONLY a valid JSON object (no extra text or markdown) with a single key "recommendations" which is a list of 3 short, actionable, and prioritized recommendations for the farmer this week, considering the weather forecast and the assessment above. Focus on climate adaptation and efficiency.
+        """
 
-    # Rule: Default message if conditions are mild and no major activities
-    if not recommendations:
-        recommendations.add("✅ Weather looks stable and no critical actions detected. It's a good week for routine farm activities.")
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        response_content = completion.choices[0].message.content
+        ai_data = json.loads(response_content)
+        return ai_data.get("recommendations", ["AI analysis failed to generate recommendations."])
 
-    return list(recommendations)
+    except APIError as e:
+         print(f"OpenAI API Error during recommendation generation: {e}")
+         return [f"Could not generate AI recommendations due to API error."] # Return error in list format
+    except Exception as e:
+        print(f"Error in AI recommendation generation: {e}")
+        # Optionally, return recommendations based *only* on the rules if AI fails
+        # fallback_recs = []
+        # if water_assessment == "High": fallback_recs.append("High water stress expected. Consider irrigation scheduling.")
+        # if "Powdery Mildew" in pest_assessment: fallback_recs.append(f"Monitor crops for Powdery Mildew due to {pest_assessment['Powdery Mildew']} risk.")
+        # if fallback_recs: return fallback_recs[:3]
+        return ["Could not generate AI recommendations at this time."]

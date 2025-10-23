@@ -5,18 +5,18 @@ from typing import List
 
 from app.database import get_db
 from app.models import ForumThread, ForumPost, User
-from app.schemas import ( # Import specific schemas from main schemas file
+from app.schemas import (  # Import specific schemas from main schemas file
     ForumThreadCreate, ForumThreadReadBasic, ForumThreadReadWithPosts,
     ForumPostCreate, ForumPostRead
 )
 from app.security import get_current_user
 
-router = APIRouter(
-    prefix="/forum", # Simple prefix (will be combined with /api in main.py)
-    tags=["forum"],
-)
+# The prefix is now just "/forum"
+router = APIRouter(prefix="/forum", tags=["Forum"])
+# ... (rest of the file is the same)
 
 # --- Thread Endpoints ---
+
 
 @router.post("/threads", response_model=ForumThreadReadBasic, status_code=status.HTTP_201_CREATED)
 def create_thread(
@@ -28,7 +28,8 @@ def create_thread(
     Creates a new forum thread.
     """
     # Create the ForumThread instance using the input data and owner_id
-    db_thread = ForumThread(**thread_data.model_dump(), owner_id=current_user.id)
+    db_thread = ForumThread(**thread_data.model_dump(),
+                            owner_id=current_user.id)
     db.add(db_thread)
     db.commit()
     db.refresh(db_thread)
@@ -37,10 +38,11 @@ def create_thread(
     # If not, you might need: db_thread = db.get(ForumThread, db_thread.id) # Re-fetch with relationships
     return db_thread
 
+
 @router.get("/threads", response_model=List[ForumThreadReadBasic])
 def get_all_threads(
     skip: int = 0,
-    limit: int = 20, # Add pagination
+    limit: int = 20,  # Add pagination
     db: Session = Depends(get_db),
     # current_user: User = Depends(get_current_user) # Allow anonymous viewing
 ):
@@ -61,6 +63,7 @@ def get_all_threads(
     # SQLModel/Pydantic should handle the conversion including nested 'owner'
     return threads
 
+
 @router.get("/threads/{thread_id}", response_model=ForumThreadReadWithPosts)
 def get_thread_by_id(
     thread_id: int,
@@ -76,7 +79,8 @@ def get_thread_by_id(
     db_thread = db.get(ForumThread, thread_id)
 
     if not db_thread:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     # Accessing relationships ensures they are loaded for the Pydantic model conversion
     # SQLModel handles this automatically if lazy loading is enabled (default)
@@ -94,6 +98,7 @@ def get_thread_by_id(
 
 # --- Post Endpoints ---
 
+
 @router.post("/posts", response_model=ForumPostRead, status_code=status.HTTP_201_CREATED)
 def create_post(
     post_data: ForumPostCreate,
@@ -106,7 +111,8 @@ def create_post(
     # Check if thread exists
     db_thread = db.get(ForumThread, post_data.thread_id)
     if not db_thread:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found, cannot post reply.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Thread not found, cannot post reply.")
 
     # Create the ForumPost instance
     db_post = ForumPost(**post_data.model_dump(), owner_id=current_user.id)
