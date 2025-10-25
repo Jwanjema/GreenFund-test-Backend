@@ -5,9 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import create_db_and_tables
 from app.routers import (
     auth, users, farms, climate, activities,
-    soil, forum, climate_actions, chatbot
+    soil, forum, climate_actions, chatbot,
+    badges, notifications  # <-- 1. Import the 'notifications' router
 )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +42,8 @@ api_router.include_router(soil.router)
 api_router.include_router(forum.router)
 api_router.include_router(climate_actions.router)
 api_router.include_router(chatbot.router)
+api_router.include_router(badges.router)
+api_router.include_router(notifications.router) # <-- 2. Include the 'notifications' router
 
 # Include the single api_router into the main app
 app.include_router(api_router)

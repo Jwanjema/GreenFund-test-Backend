@@ -1,66 +1,76 @@
-# GreenFund-test-Backend/app/routers/forum.py
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select, desc
+from sqlmodel import Session, select, desc, func 
 from typing import List
 
 from app.database import get_db
-from app.models import ForumThread, ForumPost, User
-from app.schemas import (  # Import specific schemas from main schemas file
+# 1. Import Notification model
+from app.models import ForumThread, ForumPost, User, Badge, UserBadge, Notification 
+from app.schemas import ( 
     ForumThreadCreate, ForumThreadReadBasic, ForumThreadReadWithPosts,
     ForumPostCreate, ForumPostRead
 )
 from app.security import get_current_user
 
-# The prefix is now just "/forum"
 router = APIRouter(prefix="/forum", tags=["Forum"])
-# ... (rest of the file is the same)
 
 # --- Thread Endpoints ---
-
-
 @router.post("/threads", response_model=ForumThreadReadBasic, status_code=status.HTTP_201_CREATED)
 def create_thread(
     thread_data: ForumThreadCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Creates a new forum thread.
-    """
-    # Create the ForumThread instance using the input data and owner_id
-    db_thread = ForumThread(**thread_data.model_dump(),
-                            owner_id=current_user.id)
-    db.add(db_thread)
-    db.commit()
-    db.refresh(db_thread)
-    # Eagerly load owner data for the response
-    # SQLModel should handle this if relationships are set correctly
-    # If not, you might need: db_thread = db.get(ForumThread, db_thread.id) # Re-fetch with relationships
+    try:
+        db_thread = ForumThread(**thread_data.model_dump(),
+                                owner_id=current_user.id)
+        db.add(db_thread)
+        db.commit()
+        db.refresh(db_thread)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating thread: {e}")
+
+    # --- Badge Logic (Community Member) ---
+    try:
+        thread_count = db.exec(
+            select(func.count(ForumThread.id))
+            .where(ForumThread.owner_id == current_user.id)
+        ).one()
+
+        if thread_count == 1:
+            badge_name = "Community Member"
+            badge = db.exec(select(Badge).where(Badge.name == badge_name)).first()
+            if badge:
+                existing_link = db.get(UserBadge, (current_user.id, badge.id))
+                if not existing_link:
+                    new_badge_link = UserBadge(user_id=current_user.id, badge_id=badge.id)
+                    db.add(new_badge_link)
+                    db.commit()
+    except Exception as e:
+        print(f"Error awarding 'Community Member' badge: {e}")
+    # --- End Badge Logic ---
+
+    # Eagerly load owner if necessary before returning
+    _ = db_thread.owner 
     return db_thread
 
 
 @router.get("/threads", response_model=List[ForumThreadReadBasic])
 def get_all_threads(
     skip: int = 0,
-    limit: int = 20,  # Add pagination
+    limit: int = 20, 
     db: Session = Depends(get_db),
-    # current_user: User = Depends(get_current_user) # Allow anonymous viewing
 ):
-    """
-    Gets a list of all forum threads, ordered by most recent.
-    Includes basic owner information.
-    """
-    # Select threads and eagerly load the 'owner' relationship
     statement = (
         select(ForumThread)
         .order_by(desc(ForumThread.created_at))
         .offset(skip)
         .limit(limit)
-        # Options for eager loading (if needed, depends on SQLModel/SQLAlchemy config)
-        # .options(selectinload(ForumThread.owner))
     )
     threads = db.exec(statement).all()
-    # SQLModel/Pydantic should handle the conversion including nested 'owner'
+    # Ensure owner data is loaded if relationships are lazy
+    # for thread in threads:
+    #     _ = thread.owner 
     return threads
 
 
@@ -68,57 +78,68 @@ def get_all_threads(
 def get_thread_by_id(
     thread_id: int,
     db: Session = Depends(get_db),
-    # current_user: User = Depends(get_current_user) # Allow viewing
 ):
-    """
-    Gets a single forum thread by its ID, including all its posts and author info.
-    Posts are ordered oldest first.
-    """
-    # Fetch the thread and eagerly load owner, posts, and post owners
-    # This might require more complex query setup or rely on lazy loading triggering
     db_thread = db.get(ForumThread, thread_id)
 
     if not db_thread:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
-    # Accessing relationships ensures they are loaded for the Pydantic model conversion
-    # SQLModel handles this automatically if lazy loading is enabled (default)
-    # For optimization, explicit loading (joinedload, selectinload) is better
-    # Example: Access owner
+    # Ensure relationships are loaded for Pydantic conversion
     _ = db_thread.owner
-    # Example: Access posts and their owners
     for post in db_thread.posts:
         _ = post.owner
 
-    # Sort posts manually if needed (SQLModel doesn't directly support order_by on relationship access)
     db_thread.posts.sort(key=lambda p: p.created_at)
 
     return db_thread
 
 # --- Post Endpoints ---
-
-
 @router.post("/posts", response_model=ForumPostRead, status_code=status.HTTP_201_CREATED)
 def create_post(
     post_data: ForumPostCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Creates a new post within a specific thread.
-    """
-    # Check if thread exists
     db_thread = db.get(ForumThread, post_data.thread_id)
     if not db_thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Thread not found, cannot post reply.")
 
-    # Create the ForumPost instance
-    db_post = ForumPost(**post_data.model_dump(), owner_id=current_user.id)
-    db.add(db_post)
-    db.commit()
-    db.refresh(db_post)
-    # Eagerly load owner for the response
-    # SQLModel should handle this
+    try:
+        db_post = ForumPost(**post_data.model_dump(), owner_id=current_user.id)
+        db.add(db_post)
+        db.commit()
+        db.refresh(db_post)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating post: {e}")
+
+    # --- vvvv NOTIFICATION LOGIC vvvv ---
+    try:
+        # Check if the poster is different from the thread owner
+        if db_thread.owner_id != current_user.id:
+            # Create a notification for the thread owner
+            # Use poster's full name if available, otherwise email
+            poster_name = current_user.full_name or current_user.email
+            notification_message = f"{poster_name} replied to your thread '{db_thread.title}'."
+            
+            new_notification = Notification(
+                user_id=db_thread.owner_id, # Notify the thread owner
+                message=notification_message,
+                post_id=db_post.id # Link notification to the new post
+            )
+            db.add(new_notification)
+            db.commit() # Commit the notification separately
+            
+    except Exception as e:
+        # Log error but don't fail the post creation
+        # Rollback might be needed if the commit above fails, but depends on session state
+        # db.rollback() 
+        print(f"ERROR: Could not create notification for post {db_post.id}: {e}")
+    # --- ^^^^ END NOTIFICATION LOGIC ^^^^ ---
+
+    # Ensure owner is loaded for the response
+    _ = db_post.owner 
+    
     return db_post

@@ -2,13 +2,11 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
-# --- ADD SQLModel import if not already present ---
 from sqlmodel import SQLModel
-# --- End Add ---
 
 # --- User Schemas ---
 
-class UserBase(SQLModel): # <-- Use SQLModel if you want ORM features later
+class UserBase(SQLModel):
     email: EmailStr
     full_name: Optional[str] = None
     location: Optional[str] = None
@@ -18,49 +16,38 @@ class UserCreate(UserBase):
 
 class UserRead(UserBase):
     id: int
-    # created_at: datetime # Often included in Read models
-
     class Config:
         from_attributes = True
 
-# --- vvvvvvvvvvvvvvvvvvvvvvvvvvv ---
-# --- ADD THIS USER UPDATE SCHEMA ---
-# --- vvvvvvvvvvvvvvvvvvvvvvvvvvv ---
-class UserUpdate(SQLModel): # Use SQLModel here too
-    # Fields that the user is allowed to update
-    # Optional[] means the field doesn't have to be sent in the request
+class UserUpdate(SQLModel):
     full_name: Optional[str] = None
-    email: Optional[EmailStr] = None # Allowing email change requires careful handling (e.g., verification)
+    email: Optional[EmailStr] = None
     location: Optional[str] = None
-# --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^ ---
-# --- END ADDITION              ---
-# --- ^^^^^^^^^^^^^^^^^^^^^^^^^^^ ---
 
 
 # --- Farm Schemas ---
-# ... (rest of your Farm schemas) ...
-class FarmBase(SQLModel): # <-- Consider using SQLModel for consistency
+# ... (Farm Schemas) ...
+class FarmBase(SQLModel):
     name: str
     location_text: str
-    size_acres: Optional[float] = None # Made optional based on models.py
+    size_acres: Optional[float] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     current_crop: Optional[str] = None
 
 class FarmCreate(FarmBase):
-    pass # No extra fields needed beyond FarmBase for creation based on your models
+    pass
 
 class FarmRead(FarmBase):
     id: int
     owner_id: int
     created_at: datetime
-
     class Config:
         from_attributes = True
 
 
 # --- Token Schemas ---
-# ... (rest of your Token schemas) ...
+# ... (Token Schemas) ...
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -70,13 +57,13 @@ class TokenData(BaseModel):
 
 
 # --- FarmActivity Schemas ---
-# ... (rest of your FarmActivity schemas) ...
-class FarmActivityBase(SQLModel): # <-- Use SQLModel
+# ... (FarmActivity Schemas) ...
+class FarmActivityBase(SQLModel):
     activity_type: str
     description: Optional[str] = None
-    date: Optional[datetime] = Field(default_factory=datetime.utcnow) # Set default date
-    value: Optional[float] = None # Made optional
-    unit: Optional[str] = None    # Made optional
+    date: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    value: Optional[float] = None
+    unit: Optional[str] = None
 
 class FarmActivityCreate(FarmActivityBase):
     farm_id: int
@@ -86,15 +73,14 @@ class FarmActivityRead(FarmActivityBase):
     farm_id: int
     user_id: int
     carbon_footprint_kg: Optional[float] = None
-    date: datetime # Make date required for reading
-
+    date: datetime
     class Config:
         from_attributes = True
 
 
 # --- SoilReport Schemas ---
-# ... (rest of your SoilReport schemas) ...
-class SoilReportBase(SQLModel): # <-- Use SQLModel
+# ... (SoilReport Schemas) ...
+class SoilReportBase(SQLModel):
     ph: Optional[float] = None
     nitrogen: Optional[float] = None
     phosphorus: Optional[float] = None
@@ -110,14 +96,12 @@ class SoilReportRead(SoilReportBase):
     date: datetime
     ai_analysis_text: Optional[str] = None
     suggested_crops: Optional[List[str]] = None
-
     class Config:
         from_attributes = True
 
 
 # --- Forum Schemas ---
-# ... (rest of your Forum schemas) ...
-# (Consider using SQLModel here too if Forum models inherit from SQLModel)
+# ... (Forum Schemas) ...
 class ForumUserBase(BaseModel):
     id: int
     full_name: Optional[str] = None
@@ -155,7 +139,7 @@ class ForumThreadReadWithPosts(ForumThreadReadBasic):
 
 
 # --- Climate Action Schemas ---
-# ... (rest of your Climate Action schemas) ...
+# ... (Climate Action Schemas) ...
 class Alert(BaseModel):
     type: str
     name: str
@@ -168,8 +152,53 @@ class PestDiseaseAlertResponse(BaseModel):
 
 class CarbonGuidanceResponse(BaseModel):
     farm_id: int
-    guidance: dict # Consider defining a specific Guidance schema
+    guidance: dict
 
 class WaterAdviceResponse(BaseModel):
     farm_id: int
-    advice: dict # Consider defining a specific Advice schema
+    advice: dict
+
+
+# --- Badge Schemas ---
+# ... (Badge Schemas) ...
+class BadgeRead(BaseModel):
+    id: int
+    name: str
+    description: str
+    icon_name: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class UserBadgeRead(BaseModel):
+    earned_at: datetime
+    badge: BadgeRead
+    class Config:
+        from_attributes = True
+
+class BadgeCountResponse(BaseModel):
+    count: int
+
+# --- vvvv ADD THIS NEW SCHEMA vvvv ---
+class UserPasswordChange(BaseModel):
+    old_password: str
+    new_password: str
+# --- ^^^^ END NEW SCHEMA ^^^^ ---
+
+class WeeklyEmissionsResponse(BaseModel):
+    total_emissions_kg: float
+    daily_emissions: List[float] # List of 7 values, oldest to newest
+    trend_percent: Optional[float] = None # Optional: % change vs previous week
+
+class CropSuggestionSummaryResponse(BaseModel):
+    unique_suggestion_count: int
+    recent_suggestions: List[str] # List of the 3 most recent unique suggestions
+
+class NotificationRead(BaseModel):
+    id: int
+    message: str
+    is_read: bool
+    created_at: datetime
+    post_id: Optional[int] = None # Include post_id if available
+
+    class Config:
+        from_attributes = True

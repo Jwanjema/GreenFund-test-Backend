@@ -1,15 +1,16 @@
 # GreenFund-test-Backend-backup/app/routers/activities.py
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select, func, desc # <-- Import desc
 from pydantic import BaseModel
 from typing import List, Dict, Optional
-from datetime import datetime, timezone # Import timezone
+from datetime import datetime, timedelta, timezone # <-- Import timedelta
 
 from app.database import get_db
 from app.models import FarmActivity, User, Farm
-from app.schemas import FarmActivityCreate, FarmActivityRead
+# <-- Import the new WeeklyEmissionsResponse schema
+from app.schemas import FarmActivityCreate, FarmActivityRead, WeeklyEmissionsResponse
 from app.security import get_current_user
-from app.carbon_model import estimate_carbon_with_ai # Using OpenAI version
+from app.carbon_model import estimate_carbon_with_ai
 
 router = APIRouter(prefix="/activities", tags=["Activities"])
 
@@ -23,7 +24,6 @@ async def create_activity(
     if not farm or farm.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Farm not found")
 
-    # Estimate carbon using AI
     estimated_carbon = await estimate_carbon_with_ai(
         activity.activity_type,
         activity.value,
@@ -31,40 +31,31 @@ async def create_activity(
         activity.description
     )
 
-    # --- THIS IS THE CORRECTED DATE HANDLING ---
-    # Create a dictionary from the input data
     activity_data = activity.model_dump()
 
-    # Ensure the date is set *before* validation if it's missing or None
     if activity_data.get("date") is None:
-        activity_data["date"] = datetime.now(timezone.utc) # Use timezone-aware UTC now
+        activity_data["date"] = datetime.now(timezone.utc)
 
-    # Add user_id and carbon estimate before validation
     activity_data["user_id"] = current_user.id
     activity_data["carbon_footprint_kg"] = estimated_carbon
 
-    # Now validate the complete data including the guaranteed date
     try:
         db_activity = FarmActivity.model_validate(activity_data)
-    except Exception as e: # Catch potential validation errors explicitly
-         print(f"ERROR: Validation failed for FarmActivity: {e}")
-         print(f"Data causing validation error: {activity_data}")
-         raise HTTPException(status_code=422, detail=f"Invalid activity data: {e}")
-    # --- END CORRECTION ---
+    except Exception as e:
+        print(f"ERROR: Validation failed for FarmActivity: {e}")
+        print(f"Data causing validation error: {activity_data}")
+        raise HTTPException(status_code=422, detail=f"Invalid activity data: {e}")
 
-    # Add to DB session, commit, and refresh
     try:
         db.add(db_activity)
         db.commit()
         db.refresh(db_activity)
         return db_activity
     except Exception as e:
-        db.rollback() # Rollback DB changes if commit fails
+        db.rollback()
         print(f"ERROR: Failed to save activity to DB: {e}")
         raise HTTPException(status_code=500, detail="Could not save activity to database.")
 
-
-# --- (The rest of the file remains the same) ---
 
 @router.get("/farm/{farm_id}", response_model=List[FarmActivityRead])
 def get_activities_for_farm(
@@ -79,7 +70,7 @@ def get_activities_for_farm(
     activities = db.exec(
         select(FarmActivity)
         .where(FarmActivity.farm_id == farm_id)
-        .order_by(FarmActivity.date.desc())
+        .order_by(desc(FarmActivity.date)) # Use desc() here
     ).all()
     return activities
 
@@ -133,3 +124,59 @@ def get_carbon_summary_for_farm(
         total_carbon_kg=total_carbon or 0.0,
         breakdown_by_activity=breakdown_dict
     )
+
+# --- vvvv ADD THIS NEW ENDPOINT vvvv ---
+@router.get("/emissions/weekly", response_model=WeeklyEmissionsResponse)
+def get_weekly_emissions_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Calculates the total carbon footprint for the user's farms over the last 7 days
+    and provides daily values for a trend chart.
+    """
+    # 1. Define the date range (today UTC and the 6 previous days)
+    today = datetime.now(timezone.utc).date()
+    seven_days_ago = today - timedelta(days=6)
+
+    # 2. Get the IDs of farms owned by the current user
+    user_farm_ids_query = select(Farm.id).where(Farm.owner_id == current_user.id)
+    user_farm_ids = db.exec(user_farm_ids_query).all()
+
+    if not user_farm_ids:
+        # If user has no farms, return zero emissions
+        return WeeklyEmissionsResponse(total_emissions_kg=0.0, daily_emissions=[0.0]*7)
+
+    # 3. Fetch activities within the date range for those farms
+    # Ensure date comparison works correctly with timezone-aware dates
+    start_datetime = datetime.combine(seven_days_ago, datetime.min.time(), tzinfo=timezone.utc)
+    # End of today
+    end_datetime = datetime.combine(today, datetime.max.time(), tzinfo=timezone.utc)
+
+    activities = db.exec(
+        select(FarmActivity)
+        .where(FarmActivity.farm_id.in_(user_farm_ids))
+        .where(FarmActivity.date >= start_datetime)
+        .where(FarmActivity.date <= end_datetime)
+    ).all()
+
+    # 4. Aggregate emissions per day
+    daily_totals = { (seven_days_ago + timedelta(days=i)): 0.0 for i in range(7) }
+    total_emissions = 0.0
+
+    for activity in activities:
+        # Convert activity's datetime to date for dictionary lookup
+        activity_date = activity.date.astimezone(timezone.utc).date()
+        if activity_date in daily_totals:
+            footprint = activity.carbon_footprint_kg or 0.0
+            daily_totals[activity_date] += footprint
+            total_emissions += footprint
+
+    # 5. Format the daily emissions list (oldest to newest)
+    daily_emissions_list = [daily_totals[seven_days_ago + timedelta(days=i)] for i in range(7)]
+
+    return WeeklyEmissionsResponse(
+        total_emissions_kg=round(total_emissions, 2),
+        daily_emissions=daily_emissions_list
+    )
+# --- ^^^^ END NEW ENDPOINT ^^^^ ---
