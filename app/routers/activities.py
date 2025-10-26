@@ -1,13 +1,12 @@
-# GreenFund-test-Backend-backup/app/routers/activities.py
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select, func, desc # <-- Import desc
+from sqlmodel import Session, select, func, desc # Import desc
 from pydantic import BaseModel
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta, timezone # <-- Import timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
+# Import Farm model
 from app.models import FarmActivity, User, Farm
-# <-- Import the new WeeklyEmissionsResponse schema
 from app.schemas import FarmActivityCreate, FarmActivityRead, WeeklyEmissionsResponse
 from app.security import get_current_user
 from app.carbon_model import estimate_carbon_with_ai
@@ -32,10 +31,8 @@ async def create_activity(
     )
 
     activity_data = activity.model_dump()
-
     if activity_data.get("date") is None:
         activity_data["date"] = datetime.now(timezone.utc)
-
     activity_data["user_id"] = current_user.id
     activity_data["carbon_footprint_kg"] = estimated_carbon
 
@@ -70,9 +67,39 @@ def get_activities_for_farm(
     activities = db.exec(
         select(FarmActivity)
         .where(FarmActivity.farm_id == farm_id)
-        .order_by(desc(FarmActivity.date)) # Use desc() here
+        .order_by(desc(FarmActivity.date))
     ).all()
     return activities
+    
+# --- vvvv ADD THIS NEW ENDPOINT vvvv ---
+@router.get("/me/recent", response_model=List[FarmActivityRead])
+def get_my_recent_activities(
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the most recent activities from ALL of the user's farms.
+    """
+    # Get all farm IDs owned by the current user
+    user_farm_ids = db.exec(
+        select(Farm.id).where(Farm.owner_id == current_user.id)
+    ).all()
+    
+    if not user_farm_ids:
+        return [] # Return empty list if user has no farms
+
+    # Fetch the most recent activities from any of the user's farms
+    activities = db.exec(
+        select(FarmActivity)
+        .where(FarmActivity.farm_id.in_(user_farm_ids))
+        .order_by(desc(FarmActivity.date))
+        .limit(limit)
+    ).all()
+    
+    return activities
+# --- ^^^^ END NEW ENDPOINT ^^^^ ---
+
 
 @router.delete("/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_activity(
@@ -80,6 +107,7 @@ def delete_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # ... (delete logic) ...
     activity = db.get(FarmActivity, activity_id)
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -90,6 +118,7 @@ def delete_activity(
     db.commit()
     return
 
+# ... (CarbonSummary class) ...
 class CarbonSummary(BaseModel):
     total_carbon_kg: float
     breakdown_by_activity: Dict[str, float]
@@ -100,6 +129,7 @@ def get_carbon_summary_for_farm(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # ... (carbon summary logic) ...
     farm = db.get(Farm, farm_id)
     if not farm or farm.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Farm not found")
@@ -125,32 +155,21 @@ def get_carbon_summary_for_farm(
         breakdown_by_activity=breakdown_dict
     )
 
-# --- vvvv ADD THIS NEW ENDPOINT vvvv ---
 @router.get("/emissions/weekly", response_model=WeeklyEmissionsResponse)
 def get_weekly_emissions_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Calculates the total carbon footprint for the user's farms over the last 7 days
-    and provides daily values for a trend chart.
-    """
-    # 1. Define the date range (today UTC and the 6 previous days)
+    # ... (weekly emissions logic) ...
     today = datetime.now(timezone.utc).date()
     seven_days_ago = today - timedelta(days=6)
-
-    # 2. Get the IDs of farms owned by the current user
     user_farm_ids_query = select(Farm.id).where(Farm.owner_id == current_user.id)
     user_farm_ids = db.exec(user_farm_ids_query).all()
 
     if not user_farm_ids:
-        # If user has no farms, return zero emissions
         return WeeklyEmissionsResponse(total_emissions_kg=0.0, daily_emissions=[0.0]*7)
 
-    # 3. Fetch activities within the date range for those farms
-    # Ensure date comparison works correctly with timezone-aware dates
     start_datetime = datetime.combine(seven_days_ago, datetime.min.time(), tzinfo=timezone.utc)
-    # End of today
     end_datetime = datetime.combine(today, datetime.max.time(), tzinfo=timezone.utc)
 
     activities = db.exec(
@@ -160,23 +179,19 @@ def get_weekly_emissions_summary(
         .where(FarmActivity.date <= end_datetime)
     ).all()
 
-    # 4. Aggregate emissions per day
     daily_totals = { (seven_days_ago + timedelta(days=i)): 0.0 for i in range(7) }
     total_emissions = 0.0
 
     for activity in activities:
-        # Convert activity's datetime to date for dictionary lookup
         activity_date = activity.date.astimezone(timezone.utc).date()
         if activity_date in daily_totals:
             footprint = activity.carbon_footprint_kg or 0.0
             daily_totals[activity_date] += footprint
             total_emissions += footprint
 
-    # 5. Format the daily emissions list (oldest to newest)
     daily_emissions_list = [daily_totals[seven_days_ago + timedelta(days=i)] for i in range(7)]
 
     return WeeklyEmissionsResponse(
         total_emissions_kg=round(total_emissions, 2),
         daily_emissions=daily_emissions_list
     )
-# --- ^^^^ END NEW ENDPOINT ^^^^ ---
