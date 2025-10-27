@@ -1,23 +1,26 @@
 # GreenFund-test-Backend/app/schemas.py
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from sqlmodel import SQLModel
 
 # --- User Schemas ---
 
+
 class UserBase(SQLModel):
     email: EmailStr
     full_name: Optional[str] = None
     location: Optional[str] = None
 
+
 class UserCreate(UserBase):
     password: str
 
+
 class UserRead(UserBase):
     id: int
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class UserUpdate(SQLModel):
     full_name: Optional[str] = None
@@ -35,15 +38,16 @@ class FarmBase(SQLModel):
     longitude: Optional[float] = None
     current_crop: Optional[str] = None
 
+
 class FarmCreate(FarmBase):
     pass
+
 
 class FarmRead(FarmBase):
     id: int
     owner_id: int
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Token Schemas ---
@@ -51,6 +55,7 @@ class FarmRead(FarmBase):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     email: Optional[str] = None
@@ -65,8 +70,10 @@ class FarmActivityBase(SQLModel):
     value: Optional[float] = None
     unit: Optional[str] = None
 
+
 class FarmActivityCreate(FarmActivityBase):
     farm_id: int
+
 
 class FarmActivityRead(FarmActivityBase):
     id: int
@@ -74,8 +81,7 @@ class FarmActivityRead(FarmActivityBase):
     user_id: int
     carbon_footprint_kg: Optional[float] = None
     date: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- SoilReport Schemas ---
@@ -87,8 +93,10 @@ class SoilReportBase(SQLModel):
     potassium: Optional[float] = None
     moisture: Optional[float] = None
 
+
 class SoilReportCreate(SoilReportBase):
     farm_id: int
+
 
 class SoilReportRead(SoilReportBase):
     id: int
@@ -96,8 +104,7 @@ class SoilReportRead(SoilReportBase):
     date: datetime
     ai_analysis_text: Optional[str] = None
     suggested_crops: Optional[List[str]] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Forum Schemas ---
@@ -105,37 +112,44 @@ class SoilReportRead(SoilReportBase):
 class ForumUserBase(BaseModel):
     id: int
     full_name: Optional[str] = None
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ForumPostBase(BaseModel):
     content: str = Field(min_length=1)
 
+
 class ForumPostCreate(ForumPostBase):
     thread_id: int
+
 
 class ForumPostRead(ForumPostBase):
     id: int
     created_at: datetime
     owner: ForumUserBase
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ForumThreadBase(BaseModel):
     title: str = Field(min_length=3, max_length=150)
     content: str = Field(min_length=10)
 
+
 class ForumThreadCreate(ForumThreadBase):
     pass
+
 
 class ForumThreadReadBasic(ForumThreadBase):
     id: int
     created_at: datetime
     owner: ForumUserBase
     posts: List[ForumPostRead] = []
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ForumThreadReadWithPosts(ForumThreadReadBasic):
     posts: List[ForumPostRead] = []
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Climate Action Schemas ---
@@ -146,13 +160,16 @@ class Alert(BaseModel):
     risk_level: str
     advice: str
 
+
 class PestDiseaseAlertResponse(BaseModel):
     farm_id: int
     alerts: List[Alert]
 
+
 class CarbonGuidanceResponse(BaseModel):
     farm_id: int
     guidance: dict
+
 
 class WaterAdviceResponse(BaseModel):
     farm_id: int
@@ -166,39 +183,44 @@ class BadgeRead(BaseModel):
     name: str
     description: str
     icon_name: Optional[str] = None
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class UserBadgeRead(BaseModel):
     earned_at: datetime
     badge: BadgeRead
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class BadgeCountResponse(BaseModel):
     count: int
 
 # --- vvvv ADD THIS NEW SCHEMA vvvv ---
+
+
 class UserPasswordChange(BaseModel):
     old_password: str
     new_password: str
 # --- ^^^^ END NEW SCHEMA ^^^^ ---
 
+
 class WeeklyEmissionsResponse(BaseModel):
     total_emissions_kg: float
-    daily_emissions: List[float] # List of 7 values, oldest to newest
-    trend_percent: Optional[float] = None # Optional: % change vs previous week
+    daily_emissions: List[float]  # List of 7 values, oldest to newest
+    # Optional: % change vs previous week
+    trend_percent: Optional[float] = None
+
 
 class CropSuggestionSummaryResponse(BaseModel):
     unique_suggestion_count: int
-    recent_suggestions: List[str] # List of the 3 most recent unique suggestions
+    # List of the 3 most recent unique suggestions
+    recent_suggestions: List[str]
+
 
 class NotificationRead(BaseModel):
     id: int
     message: str
     is_read: bool
     created_at: datetime
-    post_id: Optional[int] = None # Include post_id if available
-
-    class Config:
-        from_attributes = True
+    post_id: Optional[int] = None  # Include post_id if available
+    model_config = ConfigDict(from_attributes=True)
