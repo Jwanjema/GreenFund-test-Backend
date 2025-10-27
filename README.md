@@ -92,12 +92,6 @@ Security and data retention:
 - Store only the AI outputs that are necessary (the app stores `ai_analysis_text` and `suggested_crops`). Log minimal information about API responses.
 - Rotate `OPENAI_API_KEY` regularly and do not commit it to source control. Use environment-backed secrets (Docker secrets, vault, etc.) in production.
 
-If you want, I can:
-
-- add a `.env.example` with the AI config keys,
-- add a small test demonstrating how to mock `get_openai_client`, or
-- implement server-side caching for AI responses to reduce cost and latency.
-
 ## 🚀 Getting Started
 
 ### Prerequisites
